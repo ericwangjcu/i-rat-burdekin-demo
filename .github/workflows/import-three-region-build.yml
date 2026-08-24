@@ -1,0 +1,63 @@
+name: Import verified three-region i-RAT build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/import-three-region-build.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  import-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified Pages-ready build
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 'https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-faa0-81fa-8480-5a61eb376467/raw?se=2026-08-24T01%3A14%3A12Z&sp=r&sv=2026-02-06&sr=b&scid=7bc88838-1a2f-5386-b652-5893bde827bf&skoid=cb94e22a-e3df-4e6a-9e17-1696f40fa435&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-23T22%3A47%3A38Z&ske=2026-08-24T22%3A47%3A38Z&sks=b&skv=2026-02-06&sig=GCVVeJLuS6qiEi/tlXHeplnnyzUxSUVMjNlHoEQ/jfo%3D' -o /tmp/irat-build.zip
+          rm -rf /tmp/irat-site
+          mkdir -p /tmp/irat-site
+          unzip -q /tmp/irat-build.zip -d /tmp/irat-site
+
+      - name: Verify 216-scenario BMRG cube before replacing live site
+        run: |
+          set -euo pipefail
+          test -f /tmp/irat-site/index.html
+          test -f /tmp/irat-site/data/BMRGDemoV1/bmrg_demo_cube.json.gz
+          test -f /tmp/irat-site/weather-stations/BundabergAero_MTS.json
+          grep -l 'BMRGDemoV1' /tmp/irat-site/static/js/main.*.js
+          grep -l 'BundabergAero' /tmp/irat-site/static/js/main.*.js
+          python - <<'PY'
+          import gzip, json
+          p = '/tmp/irat-site/data/BMRGDemoV1/bmrg_demo_cube.json.gz'
+          with gzip.open(p, 'rt') as f:
+              cube = json.load(f)
+          n = len(cube.get('scenarios', {}))
+          if n != 216:
+              raise RuntimeError(f'Expected 216 BMRG scenarios, got {n}')
+          print('Verified live-deployment cube scenarios:', n)
+          PY
+
+      - name: Replace compiled Pages site atomically in git
+        run: |
+          set -euo pipefail
+          rm -rf data footer static weather-stations
+          rm -f asset-manifest.json favicon.ico index.html intro.jpg logo192.png logo512.png manifest.json robots.txt
+          cp -a /tmp/irat-site/. .
+          find static -type f -name '*.map' -delete || true
+          rm -f static/js/*.LICENSE.txt || true
+          touch .nojekyll
+          git rm .github/workflows/import-three-region-build.yml
+
+      - name: Commit and publish
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Deploy i-RAT with 216-scenario BMRG APSIM cube'
+          git push
