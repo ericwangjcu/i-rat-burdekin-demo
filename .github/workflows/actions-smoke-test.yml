@@ -4,8 +4,21 @@ on:
   push:
     paths:
       - '.github/workflows/actions-smoke-test.yml'
+permissions:
+  contents: read
 jobs:
-  test:
+  test-private-checkout:
     runs-on: ubuntu-latest
     steps:
-      - run: echo PUBLIC_ACTIONS_OK
+      - name: Try ephemeral checkout of private source
+        uses: actions/checkout@v4
+        with:
+          repository: ericwangjcu/i-rat
+          ref: burdekin-rebuild
+          token: ${{ github.token }}
+      - name: Confirm source is available only in runner workspace
+        run: |
+          test -f package.json
+          test -f regional_demo/build_region.py
+          test -f bmrg/patch_regional_demo_source.py
+          echo PRIVATE_CHECKOUT_OK
