@@ -1,0 +1,136 @@
+name: Repair three-region i-RAT site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/repair-three-region-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Rebuild regional selection in compiled site
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          js_dir = Path('static/js')
+          preferred = js_dir / 'main.threeregion-20260829.js'
+          if preferred.exists():
+              source = preferred
+          else:
+              candidates = [p for p in js_dir.glob('main*.js') if not p.name.endswith('.LICENSE.txt')]
+              candidates = [p for p in candidates if p.suffix == '.js']
+              if not candidates:
+                  raise SystemExit('No compiled main JavaScript bundle found')
+              source = max(candidates, key=lambda p: p.stat().st_size)
+
+          text = source.read_text(encoding='utf-8')
+
+          replacements = [
+              ('weatherStations:[Sk.AyrDPI,Sk.Clare]', 'weatherStations:[Sk.AyrDPI]'),
+              ('weatherStations:[Sk.Mackay,Sk.Proserpine,Sk.PlaneCreek,Sk.Eton]', 'weatherStations:[Sk.Mackay]'),
+          ]
+          for old, new in replacements:
+              if old in text:
+                  if text.count(old) != 1:
+                      raise SystemExit(f'Unexpected number of matches for {old}: {text.count(old)}')
+                  text = text.replace(old, new)
+              elif new not in text:
+                  raise SystemExit(f'Could not locate regional station configuration: {old}')
+
+          target = preferred
+          target.write_text(text, encoding='utf-8')
+          if source != target and source.exists():
+              source.unlink()
+
+          index = Path('index.html')
+          html = index.read_text(encoding='utf-8')
+          html, n = re.subn(
+              r'src="\./static/js/main[^\"]*\.js(?:\?[^\"]*)?"',
+              'src="./static/js/main.threeregion-20260829.js?v=20260829b"',
+              html,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit(f'Expected to replace one main JS reference, replaced {n}')
+          html = re.sub(
+              r'<script[^>]+src="\./demo-hotfix\.js[^\"]*"[^>]*></script>',
+              '',
+              html,
+          )
+          index.write_text(html, encoding='utf-8')
+          PY
+
+          rm -f demo-hotfix.js
+
+      - name: Verify rebuilt site
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check static/js/main.threeregion-20260829.js
+          python - <<'PY'
+          from pathlib import Path
+          js = Path('static/js/main.threeregion-20260829.js').read_text(encoding='utf-8')
+          html = Path('index.html').read_text(encoding='utf-8')
+
+          required = [
+              'weatherStations:[Sk.AyrDPI]',
+              'weatherStations:[Sk.Mackay]',
+              'weatherStations:[Sk.BundabergAero]',
+              'root:"V6"',
+              'root:"V8"',
+              'root:"BMRGDemoV1"',
+              'https://incentiv8.s3.ap-southeast-2.amazonaws.com/Public',
+              './data/BMRGDemoV1/bmrg_demo_cube.json.gz',
+          ]
+          for item in required:
+              if item not in js:
+                  raise SystemExit(f'Missing required site wiring: {item}')
+
+          blocked_config = [
+              'weatherStations:[Sk.AyrDPI,Sk.Clare]',
+              'weatherStations:[Sk.Mackay,Sk.Proserpine,Sk.PlaneCreek,Sk.Eton]',
+          ]
+          for item in blocked_config:
+              if item in js:
+                  raise SystemExit(f'Old regional station configuration remains: {item}')
+
+          if 'demo-hotfix.js' in html:
+              raise SystemExit('Obsolete demo-hotfix.js is still referenced')
+          if 'main.threeregion-20260829.js?v=20260829b' not in html:
+              raise SystemExit('Cache-busted rebuilt bundle is not referenced')
+
+          print('Three-region site verification passed')
+          PY
+
+      - name: Commit repaired site
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html static/js/main.threeregion-20260829.js .github/workflows/repair-three-region-site.yml
+          git add -u
+          if git diff --cached --quiet; then
+            echo 'No site changes to commit'
+            exit 0
+          fi
+          git commit -m 'Rebuild three-region site with fixed regional stations'
+          git push
