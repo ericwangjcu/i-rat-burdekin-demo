@@ -98,11 +98,13 @@ jobs:
               'root:"V8"',
               'root:"BMRGDemoV1"',
               'https://incentiv8.s3.ap-southeast-2.amazonaws.com/Public',
-              './data/BMRGDemoV1/bmrg_demo_cube.json.gz',
           ]
           for item in required:
               if item not in js:
                   raise SystemExit(f'Missing required site wiring: {item}')
+
+          if not Path('data/BMRGDemoV1/bmrg_demo_cube.json.gz').is_file():
+              raise SystemExit('Bundaberg APSIM cube is missing')
 
           blocked_config = [
               'weatherStations:[Sk.AyrDPI,Sk.Clare]',
