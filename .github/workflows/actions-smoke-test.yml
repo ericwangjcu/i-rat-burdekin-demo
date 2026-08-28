@@ -1,0 +1,11 @@
+name: Public Actions smoke test
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/actions-smoke-test.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo PUBLIC_ACTIONS_OK
