@@ -7,28 +7,130 @@ on:
 permissions:
   contents: read
 jobs:
-  verify-live-pages:
+  trace-mackay-browser:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify deployed HTML and local scenarios
+      - name: Trace Mackay in a real headless browser
         shell: bash
         run: |
           set -euo pipefail
-          base='https://ericwangjcu.github.io/i-rat-burdekin-demo'
-          index="$(curl -L --fail --retry 3 --silent --show-error "$base/")"
-          echo "$index" | grep -q 'main.threeregion-20260829.js?v=20260829c'
+          google-chrome --version || true
+          chromedriver --version || true
+          python -m pip install --quiet selenium
+          python - <<'PY'
+          import json, time
+          from selenium import webdriver
+          from selenium.webdriver.common.by import By
+          from selenium.webdriver.support.ui import Select
+          from selenium.webdriver.chrome.options import Options
 
-          urls=(
-            "$base/data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/3b6823fcfce6f81cf9f52f11d52afb5dd530cfa82c95a266619bae8402e52fbf.csv"
-            "$base/data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/4d8ba6c736a5292e91081a776c4fa66aac6773efaf07f95d7159808d4eed5974.csv"
-            "$base/data/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/Furrow/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/6e92e8a24344c5ec6e5defb966b7c750520d7c07fb2f68dbe0cad6914aec16d6.csv"
-            "$base/data/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/LPOH_5_15/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/0084d9c1d5e419b41aab73b1959c877399be948781ca49cb58d2141f85e139d2.csv"
-          )
-          for url in "${urls[@]}"; do
-            code="$(curl -L --silent --show-error -o /tmp/scenario.csv -w '%{http_code}' "$url")"
-            echo "$code $url"
-            test "$code" = '200'
-            test -s /tmp/scenario.csv
-            head -n 1 /tmp/scenario.csv | grep -q ','
-          done
-          echo LIVE_PAGES_SCENARIOS_OK
+          base='https://ericwangjcu.github.io/i-rat-burdekin-demo/?trace=20260829d'
+          opts=Options()
+          opts.add_argument('--headless=new')
+          opts.add_argument('--no-sandbox')
+          opts.add_argument('--disable-dev-shm-usage')
+          opts.add_argument('--window-size=1440,1400')
+          opts.set_capability('goog:loggingPrefs', {'browser':'ALL','performance':'ALL'})
+          driver=webdriver.Chrome(options=opts)
+          try:
+              driver.get(base)
+              time.sleep(8)
+              print('INITIAL URL', driver.current_url)
+              print('INITIAL BODY START')
+              print(driver.find_element(By.TAG_NAME,'body').text[:5000])
+              print('INITIAL BODY END')
+
+              print('--- SELECTS ---')
+              for i,s in enumerate(driver.find_elements(By.TAG_NAME,'select')):
+                  try:
+                      print('SELECT',i,'text=',repr(s.text),'html=',s.get_attribute('outerHTML')[:1000])
+                  except Exception as e: print('SELECT ERR',i,e)
+
+              print('--- MACKAY ELEMENTS ---')
+              matches=driver.find_elements(By.XPATH, "//*[contains(translate(normalize-space(.), 'MACKAY', 'mackay'), 'mackay')]")
+              for i,e in enumerate(matches[:80]):
+                  try:
+                      print('MEL',i,e.tag_name,'displayed=',e.is_displayed(),'text=',repr(e.text[:300]),'html=',e.get_attribute('outerHTML')[:800])
+                  except Exception as ex: print('MEL ERR',i,ex)
+
+              switched=False
+              # Prefer an actual select option containing Mackay.
+              for s in driver.find_elements(By.TAG_NAME,'select'):
+                  try:
+                      sel=Select(s)
+                      for opt in sel.options:
+                          if 'mackay' in opt.text.lower():
+                              print('SWITCH VIA SELECT',repr(opt.text))
+                              sel.select_by_visible_text(opt.text)
+                              switched=True
+                              break
+                      if switched: break
+                  except Exception as ex:
+                      print('SELECT SWITCH ERR',ex)
+
+              # Otherwise click the smallest visible Mackay-labelled control/link/button.
+              if not switched:
+                  candidates=[]
+                  for e in matches:
+                      try:
+                          txt=e.text.strip()
+                          if e.is_displayed() and txt and len(txt)<120 and e.tag_name.lower() in ('button','a','label','div','span','li'):
+                              candidates.append((len(txt),e,txt))
+                      except Exception: pass
+                  candidates.sort(key=lambda x:x[0])
+                  for _,e,txt in candidates:
+                      try:
+                          print('TRY CLICK',e.tag_name,repr(txt))
+                          driver.execute_script('arguments[0].scrollIntoView({block:"center"});', e)
+                          time.sleep(.3)
+                          driver.execute_script('arguments[0].click();', e)
+                          switched=True
+                          print('CLICKED',repr(txt))
+                          break
+                      except Exception as ex:
+                          print('CLICK ERR',repr(txt),ex)
+
+              time.sleep(12)
+              print('SWITCHED?', switched)
+              print('AFTER URL', driver.current_url)
+              print('AFTER BODY START')
+              print(driver.find_element(By.TAG_NAME,'body').text[:7000])
+              print('AFTER BODY END')
+
+              try:
+                  print('LOCALSTORAGE', driver.execute_script('return JSON.stringify(localStorage);'))
+                  print('SESSIONSTORAGE', driver.execute_script('return JSON.stringify(sessionStorage);'))
+              except Exception as ex: print('STORAGE ERR',ex)
+
+              print('--- BROWSER LOGS ---')
+              for entry in driver.get_log('browser'):
+                  print(entry)
+
+              print('--- NETWORK RELEVANT ---')
+              req={}
+              events=[]
+              for entry in driver.get_log('performance'):
+                  try:
+                      msg=json.loads(entry['message'])['message']
+                      method=msg.get('method')
+                      params=msg.get('params',{})
+                      if method=='Network.requestWillBeSent':
+                          rid=params.get('requestId'); url=params.get('request',{}).get('url','')
+                          req[rid]=url
+                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')):
+                              events.append(('REQUEST',url,''))
+                      elif method=='Network.responseReceived':
+                          r=params.get('response',{}); url=r.get('url','')
+                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')):
+                              events.append(('RESPONSE',url,str(r.get('status'))+' '+str(r.get('mimeType'))))
+                      elif method=='Network.loadingFailed':
+                          rid=params.get('requestId'); url=req.get(rid,'')
+                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')):
+                              events.append(('FAILED',url,str(params)))
+                  except Exception:
+                      pass
+              for kind,url,extra in events:
+                  print(kind,extra,url)
+          finally:
+              driver.quit()
+          PY
