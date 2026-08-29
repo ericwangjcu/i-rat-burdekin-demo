@@ -7,24 +7,28 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect-s3-contexts:
+  verify-live-pages:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Print compiled S3 URL contexts
+      - name: Verify deployed HTML and local scenarios
+        shell: bash
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('static/js/main.threeregion-20260829.js')
-          s=p.read_text(encoding='utf-8')
-          needle='https://incentiv8.s3.ap-southeast-2.amazonaws.com/Public'
-          pos=[]; start=0
-          while True:
-              i=s.find(needle,start)
-              if i<0: break
-              pos.append(i); start=i+1
-          print('COUNT',len(pos))
-          for n,i in enumerate(pos,1):
-              print(f'--- OCCURRENCE {n} at {i} ---')
-              print(s[max(0,i-500):min(len(s),i+len(needle)+500)])
-          PY
+          set -euo pipefail
+          base='https://ericwangjcu.github.io/i-rat-burdekin-demo'
+          index="$(curl -L --fail --retry 3 --silent --show-error "$base/")"
+          echo "$index" | grep -q 'main.threeregion-20260829.js?v=20260829c'
+
+          urls=(
+            "$base/data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/3b6823fcfce6f81cf9f52f11d52afb5dd530cfa82c95a266619bae8402e52fbf.csv"
+            "$base/data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/4d8ba6c736a5292e91081a776c4fa66aac6773efaf07f95d7159808d4eed5974.csv"
+            "$base/data/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/Furrow/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/6e92e8a24344c5ec6e5defb966b7c750520d7c07fb2f68dbe0cad6914aec16d6.csv"
+            "$base/data/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/LPOH_5_15/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/0084d9c1d5e419b41aab73b1959c877399be948781ca49cb58d2141f85e139d2.csv"
+          )
+          for url in "${urls[@]}"; do
+            code="$(curl -L --silent --show-error -o /tmp/scenario.csv -w '%{http_code}' "$url")"
+            echo "$code $url"
+            test "$code" = '200'
+            test -s /tmp/scenario.csv
+            head -n 1 /tmp/scenario.csv | grep -q ','
+          done
+          echo LIVE_PAGES_SCENARIOS_OK
