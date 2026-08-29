@@ -7,36 +7,120 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect-regional-templates:
+  reproduce-mackay:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Inspect compiled regional and storage contexts
+      - name: Switch live paddock to Mackay and trace requests
         shell: bash
         run: |
           set -euo pipefail
+          python -m pip install --quiet selenium
           python - <<'PY'
-          from pathlib import Path
-          p=Path('static/js/main.threeregion-20260829.js')
-          s=p.read_text(encoding='utf-8')
-          needles=[
-            'irat-standalone-paddocks',
-            'Burdekin demo',
-            'Mackay',
-            'Bundaberg',
-            'root:"V6"',
-            'root:"V8"',
-            'root:"BMRGDemoV1"',
-            'MW_01MayR6V1',
-            'weatherStations:[Sk.Mackay]',
-          ]
-          for needle in needles:
-              print('\n===== NEEDLE',needle,'COUNT',s.count(needle),'=====')
-              start=0
-              for n in range(min(10,s.count(needle))):
-                  i=s.find(needle,start)
-                  if i<0: break
-                  print(f'--- occurrence {n+1} at {i} ---')
-                  print(s[max(0,i-1200):min(len(s),i+len(needle)+1800)])
-                  start=i+len(needle)
+          import json, time
+          from selenium import webdriver
+          from selenium.webdriver.common.by import By
+          from selenium.webdriver.support.ui import Select
+          from selenium.webdriver.chrome.options import Options
+
+          opts=Options()
+          opts.add_argument('--headless=new')
+          opts.add_argument('--no-sandbox')
+          opts.add_argument('--disable-dev-shm-usage')
+          opts.add_argument('--window-size=1440,1400')
+          opts.set_capability('goog:loggingPrefs', {'browser':'ALL','performance':'ALL'})
+          d=webdriver.Chrome(options=opts)
+          try:
+              d.get('https://ericwangjcu.github.io/i-rat-burdekin-demo/?mackaytrace=20260829e')
+              time.sleep(8)
+              # Accept disclaimer if shown.
+              for b in d.find_elements(By.TAG_NAME,'button'):
+                  if b.is_displayed() and b.text.strip().lower()=='accept':
+                      d.execute_script('arguments[0].click();',b); time.sleep(1); break
+
+              # Open paddock settings modal.
+              opened=False
+              for b in d.find_elements(By.TAG_NAME,'button'):
+                  if b.is_displayed() and 'paddock settings' in b.text.lower():
+                      print('CLICK PADDOCK SETTINGS',repr(b.text))
+                      d.execute_script('arguments[0].click();',b)
+                      opened=True
+                      break
+              print('OPENED',opened)
+              time.sleep(2)
+              print('MODAL/BODY AFTER OPEN')
+              print(d.find_element(By.TAG_NAME,'body').text[:7000])
+
+              changed=False
+              for i,s in enumerate(d.find_elements(By.TAG_NAME,'select')):
+                  try:
+                      sel=Select(s)
+                      opts_txt=[o.text for o in sel.options]
+                      print('SELECT',i,'current=',sel.first_selected_option.text,'options=',opts_txt)
+                      for o in sel.options:
+                          if 'mackay' in o.text.lower():
+                              print('SELECTING MACKAY IN',i,repr(o.text))
+                              sel.select_by_visible_text(o.text)
+                              changed=True
+                              break
+                      if changed: break
+                  except Exception as ex:
+                      print('SELECT ERR',i,ex)
+              print('REGION CHANGED',changed)
+              time.sleep(3)
+              print('BODY AFTER MACKAY SELECT')
+              print(d.find_element(By.TAG_NAME,'body').text[:8000])
+
+              # Commit the modal changes.
+              saved=False
+              buttons=d.find_elements(By.TAG_NAME,'button')
+              for b in buttons:
+                  try:
+                      txt=b.text.strip().lower()
+                      if b.is_displayed() and txt and any(k in txt for k in ('save','apply','update')) and 'settings' not in txt:
+                          print('TRY SAVE BUTTON',repr(b.text))
+                          d.execute_script('arguments[0].click();',b)
+                          saved=True
+                          break
+                  except Exception: pass
+              # If wording is simply Close/Done, print all visible buttons and click likely modal footer last button.
+              if not saved:
+                  vis=[]
+                  for b in d.find_elements(By.TAG_NAME,'button'):
+                      try:
+                          if b.is_displayed() and b.text.strip(): vis.append((b,b.text.strip()))
+                      except Exception: pass
+                  print('VISIBLE BUTTONS', [x[1] for x in vis])
+                  for b,txt in reversed(vis):
+                      if txt.lower() not in ('close','accept') and 'paddock settings' not in txt.lower():
+                          print('FALLBACK CLICK',repr(txt))
+                          d.execute_script('arguments[0].click();',b)
+                          saved=True
+                          break
+              print('SAVED?',saved)
+              time.sleep(15)
+              print('FINAL BODY START')
+              print(d.find_element(By.TAG_NAME,'body').text[:9000])
+              print('FINAL BODY END')
+              print('LOCALSTORAGE',d.execute_script('return JSON.stringify(localStorage);'))
+
+              req={}; events=[]
+              for entry in d.get_log('performance'):
+                  try:
+                      msg=json.loads(entry['message'])['message']; method=msg.get('method'); p=msg.get('params',{})
+                      if method=='Network.requestWillBeSent':
+                          rid=p.get('requestId'); url=p.get('request',{}).get('url',''); req[rid]=url
+                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')): events.append(('REQUEST','',url))
+                      elif method=='Network.responseReceived':
+                          r=p.get('response',{}); url=r.get('url','')
+                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')): events.append(('RESPONSE',str(r.get('status'))+' '+str(r.get('mimeType')),url))
+                      elif method=='Network.loadingFailed':
+                          url=req.get(p.get('requestId'),'')
+                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')): events.append(('FAILED',str(p),url))
+                  except Exception: pass
+              print('--- NETWORK ---')
+              for e in events: print(*e)
+              print('--- BROWSER ---')
+              for e in d.get_log('browser'): print(e)
+          finally:
+              d.quit()
           PY
