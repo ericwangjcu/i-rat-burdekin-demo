@@ -1,0 +1,6 @@
+client_id,client_name,account_id,account_name,nmi,address,pump_name,current_tariff,second_tariff,motor_kw,power_factor,solar,eligible_tariffs
+C001,Green Valley Farming,A001,GV-IRR-01,SAMPLE000001,"Sample Road, Home Hill QLD",Main irrigation pump,T20,,45,0.9,No,T20;T22D;T22E;T24C
+C001,Green Valley Farming,A002,GV-CTRL-02,SAMPLE000002,"Sample Road, Home Hill QLD",Secondary controlled-load pump,T33,,22,0.92,No,T20;T33;T34
+C002,Riverbend Farming,A003,RB-IRR-01,SAMPLE000003,"Sample Farm, Ayr QLD",Bore pump,T22D,,30,0.92,Yes,T20;T22D;T22E;T24C
+C003,Tablelands Produce,A004,TP-IRR-01,SAMPLE000004,"Sample Highway, Mareeba QLD",River pump,T20,,55,0.88,No,T20;T22D;T22E;T24C
+C004,Northern Ag Services,A005,NAS-IRR-01,SAMPLE000005,"Sample Road, Burdekin QLD",Large irrigation pump,T24C,,75,0.89,No,T20;T22D;T22E;T24C
