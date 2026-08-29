@@ -19,88 +19,71 @@ jobs:
           import json, time
           from selenium import webdriver
           from selenium.webdriver.common.by import By
-          from selenium.webdriver.support.ui import Select
           from selenium.webdriver.chrome.options import Options
 
           opts=Options()
           opts.add_argument('--headless=new')
           opts.add_argument('--no-sandbox')
           opts.add_argument('--disable-dev-shm-usage')
-          opts.add_argument('--window-size=1440,1400')
+          opts.add_argument('--window-size=1440,1600')
           opts.set_capability('goog:loggingPrefs', {'browser':'ALL','performance':'ALL'})
           d=webdriver.Chrome(options=opts)
           try:
-              d.get('https://ericwangjcu.github.io/i-rat-burdekin-demo/?mackaytrace=20260829e')
+              d.get('https://ericwangjcu.github.io/i-rat-burdekin-demo/?mackaytrace=20260829f')
               time.sleep(8)
-              # Accept disclaimer if shown.
               for b in d.find_elements(By.TAG_NAME,'button'):
                   if b.is_displayed() and b.text.strip().lower()=='accept':
                       d.execute_script('arguments[0].click();',b); time.sleep(1); break
 
-              # Open paddock settings modal.
-              opened=False
               for b in d.find_elements(By.TAG_NAME,'button'):
                   if b.is_displayed() and 'paddock settings' in b.text.lower():
-                      print('CLICK PADDOCK SETTINGS',repr(b.text))
-                      d.execute_script('arguments[0].click();',b)
-                      opened=True
-                      break
-              print('OPENED',opened)
+                      d.execute_script('arguments[0].click();',b); break
               time.sleep(2)
-              print('MODAL/BODY AFTER OPEN')
-              print(d.find_element(By.TAG_NAME,'body').text[:7000])
 
-              changed=False
-              for i,s in enumerate(d.find_elements(By.TAG_NAME,'select')):
+              markers=d.find_elements(By.CSS_SELECTOR,'.leaflet-marker-icon')
+              print('MARKER COUNT',len(markers))
+              for i,m in enumerate(markers):
                   try:
-                      sel=Select(s)
-                      opts_txt=[o.text for o in sel.options]
-                      print('SELECT',i,'current=',sel.first_selected_option.text,'options=',opts_txt)
-                      for o in sel.options:
-                          if 'mackay' in o.text.lower():
-                              print('SELECTING MACKAY IN',i,repr(o.text))
-                              sel.select_by_visible_text(o.text)
-                              changed=True
-                              break
-                      if changed: break
-                  except Exception as ex:
-                      print('SELECT ERR',i,ex)
-              print('REGION CHANGED',changed)
-              time.sleep(3)
-              print('BODY AFTER MACKAY SELECT')
-              print(d.find_element(By.TAG_NAME,'body').text[:8000])
+                      print('MARKER',i,'title=',repr(m.get_attribute('title')),'alt=',repr(m.get_attribute('alt')),'src=',repr(m.get_attribute('src')),'outer=',m.get_attribute('outerHTML')[:1200])
+                  except Exception as e: print('MARKER ERR',i,e)
 
-              # Commit the modal changes.
-              saved=False
-              buttons=d.find_elements(By.TAG_NAME,'button')
-              for b in buttons:
-                  try:
-                      txt=b.text.strip().lower()
-                      if b.is_displayed() and txt and any(k in txt for k in ('save','apply','update')) and 'settings' not in txt:
-                          print('TRY SAVE BUTTON',repr(b.text))
-                          d.execute_script('arguments[0].click();',b)
-                          saved=True
-                          break
-                  except Exception: pass
-              # If wording is simply Close/Done, print all visible buttons and click likely modal footer last button.
-              if not saved:
-                  vis=[]
-                  for b in d.find_elements(By.TAG_NAME,'button'):
-                      try:
-                          if b.is_displayed() and b.text.strip(): vis.append((b,b.text.strip()))
-                      except Exception: pass
-                  print('VISIBLE BUTTONS', [x[1] for x in vis])
-                  for b,txt in reversed(vis):
-                      if txt.lower() not in ('close','accept') and 'paddock settings' not in txt.lower():
-                          print('FALLBACK CLICK',repr(txt))
-                          d.execute_script('arguments[0].click();',b)
-                          saved=True
-                          break
-              print('SAVED?',saved)
-              time.sleep(15)
+              # Region station markers are ordered Ayr, Bundaberg, Pleystowe in this standalone build.
+              # Click the Pleystowe/Mackay marker, preferring any element with a matching title/alt.
+              target=None
+              for m in markers:
+                  txt=' '.join(filter(None,[m.get_attribute('title'),m.get_attribute('alt'),m.get_attribute('aria-label')])).lower()
+                  if 'pleystowe' in txt or 'mackay' in txt:
+                      target=m; break
+              if target is None and len(markers)>=3:
+                  target=markers[-1]
+              if target is None:
+                  raise SystemExit('No Mackay/Pleystowe marker found')
+              print('CLICKING TARGET',target.get_attribute('outerHTML')[:1200])
+              d.execute_script('arguments[0].scrollIntoView({block:"center"});',target)
+              d.execute_script('arguments[0].click();',target)
+              time.sleep(4)
+              body=d.find_element(By.TAG_NAME,'body').text
+              print('AFTER MARKER REGION LINES', [line for line in body.splitlines() if line.startswith('Region ') or 'Pleystowe' in line or 'Mackay' in line][:30])
+              print('AFTER MARKER BODY START')
+              print(body[-7000:])
+              print('AFTER MARKER BODY END')
+
+              # Close applies changed paddock settings in this UI.
+              closed=False
+              for b in d.find_elements(By.TAG_NAME,'button'):
+                  if b.is_displayed() and b.text.strip().lower()=='close':
+                      print('CLICK CLOSE')
+                      d.execute_script('arguments[0].click();',b)
+                      closed=True
+                      break
+              print('CLOSED',closed)
+              time.sleep(18)
+
+              final=d.find_element(By.TAG_NAME,'body').text
               print('FINAL BODY START')
-              print(d.find_element(By.TAG_NAME,'body').text[:9000])
+              print(final[:9000])
               print('FINAL BODY END')
+              print('HAS ERROR', 'Failed to get scenario data' in final)
               print('LOCALSTORAGE',d.execute_script('return JSON.stringify(localStorage);'))
 
               req={}; events=[]
