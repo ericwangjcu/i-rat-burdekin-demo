@@ -1,0 +1,92 @@
+name: Localise Burdekin and Mackay scenarios
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/localise-default-scenarios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  localise:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mirror default scenario CSVs from S3
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://incentiv8.s3.ap-southeast-2.amazonaws.com/Public'
+
+          get_csv() {
+            src="$1"
+            dst="$2"
+            mkdir -p "$(dirname "$dst")"
+            echo "Fetching $src"
+            curl -L --fail --retry 3 --silent --show-error "$src" -o "$dst"
+            test -s "$dst"
+            head -n 1 "$dst" | grep -q ','
+          }
+
+          # Burdekin default current/new. Include both T1 and T2 so the burnt/tillage
+          # dependency cannot leave the initial paddock with an unavailable file.
+          get_csv "$base/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/3b6823fcfce6f81cf9f52f11d52afb5dd530cfa82c95a266619bae8402e52fbf.csv" \
+            "data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/3b6823fcfce6f81cf9f52f11d52afb5dd530cfa82c95a266619bae8402e52fbf.csv"
+          get_csv "$base/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/4d8ba6c736a5292e91081a776c4fa66aac6773efaf07f95d7159808d4eed5974.csv" \
+            "data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/4d8ba6c736a5292e91081a776c4fa66aac6773efaf07f95d7159808d4eed5974.csv"
+          get_csv "$base/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T2/999/Furrow/LowFreq/200/BareFallow/45153944ae773db927b8f27da88cff734a1177be079db6cf9064c0efc7366388.csv" \
+            "data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T2/999/Furrow/LowFreq/200/BareFallow/45153944ae773db927b8f27da88cff734a1177be079db6cf9064c0efc7366388.csv"
+          get_csv "$base/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T2/999/Furrow/LowFreq/200/BareFallow/e49fb3d0a2c298e06d8ae8849756a3aeb86dd17fe80cd5620146feb0640bc6a6.csv" \
+            "data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T2/999/Furrow/LowFreq/200/BareFallow/e49fb3d0a2c298e06d8ae8849756a3aeb86dd17fe80cd5620146feb0640bc6a6.csv"
+
+          # Mackay-Pleystowe default current/new.
+          get_csv "$base/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/Furrow/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/6e92e8a24344c5ec6e5defb966b7c750520d7c07fb2f68dbe0cad6914aec16d6.csv" \
+            "data/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/Furrow/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/6e92e8a24344c5ec6e5defb966b7c750520d7c07fb2f68dbe0cad6914aec16d6.csv"
+          get_csv "$base/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/LPOH_5_15/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/0084d9c1d5e419b41aab73b1959c877399be948781ca49cb58d2141f85e139d2.csv" \
+            "data/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/LPOH_5_15/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/0084d9c1d5e419b41aab73b1959c877399be948781ca49cb58d2141f85e139d2.csv"
+
+      - name: Point standard scenario loader at same-origin Pages data
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('static/js/main.threeregion-20260829.js')
+          text = p.read_text(encoding='utf-8')
+          old = 'https://incentiv8.s3.ap-southeast-2.amazonaws.com/Public'
+          new = './data'
+          count = text.count(old)
+          print('S3 base occurrences:', count)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one scenario S3 base, found {count}')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          node --check static/js/main.threeregion-20260829.js
+
+      - name: Verify all initial files and local loader
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/3b6823fcfce6f81cf9f52f11d52afb5dd530cfa82c95a266619bae8402e52fbf.csv
+          test -s data/V6/Burdekin/AyrDPI/Mulg/15AprV1R4/T1/999/Furrow/LowFreq/200/BareFallow/4d8ba6c736a5292e91081a776c4fa66aac6773efaf07f95d7159808d4eed5974.csv
+          test -s data/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/Furrow/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/6e92e8a24344c5ec6e5defb966b7c750520d7c07fb2f68dbe0cad6914aec16d6.csv
+          test -s data/V8/Mackay/Mackay/Pind/MW_01MayR6V1/MW_T3/3/LPOH_5_15/SWD_0_50_200_50_50/130_150/MW_Surf2/BareFallow/0084d9c1d5e419b41aab73b1959c877399be948781ca49cb58d2141f85e139d2.csv
+          grep -q './data' static/js/main.threeregion-20260829.js
+          ! grep -q 'https://incentiv8.s3.ap-southeast-2.amazonaws.com/Public' static/js/main.threeregion-20260829.js
+          echo 'Initial Burdekin and Mackay scenarios are fully same-origin.'
+
+      - name: Commit same-origin data repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/V6 data/V8 static/js/main.threeregion-20260829.js .github/workflows/localise-default-scenarios.yml
+          git commit -m 'Serve Burdekin and Mackay scenario data locally'
+          git push
