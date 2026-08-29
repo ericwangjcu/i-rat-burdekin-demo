@@ -7,130 +7,36 @@ on:
 permissions:
   contents: read
 jobs:
-  trace-mackay-browser:
+  inspect-regional-templates:
     runs-on: ubuntu-latest
     steps:
-      - name: Trace Mackay in a real headless browser
+      - uses: actions/checkout@v4
+      - name: Inspect compiled regional and storage contexts
         shell: bash
         run: |
           set -euo pipefail
-          google-chrome --version || true
-          chromedriver --version || true
-          python -m pip install --quiet selenium
           python - <<'PY'
-          import json, time
-          from selenium import webdriver
-          from selenium.webdriver.common.by import By
-          from selenium.webdriver.support.ui import Select
-          from selenium.webdriver.chrome.options import Options
-
-          base='https://ericwangjcu.github.io/i-rat-burdekin-demo/?trace=20260829d'
-          opts=Options()
-          opts.add_argument('--headless=new')
-          opts.add_argument('--no-sandbox')
-          opts.add_argument('--disable-dev-shm-usage')
-          opts.add_argument('--window-size=1440,1400')
-          opts.set_capability('goog:loggingPrefs', {'browser':'ALL','performance':'ALL'})
-          driver=webdriver.Chrome(options=opts)
-          try:
-              driver.get(base)
-              time.sleep(8)
-              print('INITIAL URL', driver.current_url)
-              print('INITIAL BODY START')
-              print(driver.find_element(By.TAG_NAME,'body').text[:5000])
-              print('INITIAL BODY END')
-
-              print('--- SELECTS ---')
-              for i,s in enumerate(driver.find_elements(By.TAG_NAME,'select')):
-                  try:
-                      print('SELECT',i,'text=',repr(s.text),'html=',s.get_attribute('outerHTML')[:1000])
-                  except Exception as e: print('SELECT ERR',i,e)
-
-              print('--- MACKAY ELEMENTS ---')
-              matches=driver.find_elements(By.XPATH, "//*[contains(translate(normalize-space(.), 'MACKAY', 'mackay'), 'mackay')]")
-              for i,e in enumerate(matches[:80]):
-                  try:
-                      print('MEL',i,e.tag_name,'displayed=',e.is_displayed(),'text=',repr(e.text[:300]),'html=',e.get_attribute('outerHTML')[:800])
-                  except Exception as ex: print('MEL ERR',i,ex)
-
-              switched=False
-              # Prefer an actual select option containing Mackay.
-              for s in driver.find_elements(By.TAG_NAME,'select'):
-                  try:
-                      sel=Select(s)
-                      for opt in sel.options:
-                          if 'mackay' in opt.text.lower():
-                              print('SWITCH VIA SELECT',repr(opt.text))
-                              sel.select_by_visible_text(opt.text)
-                              switched=True
-                              break
-                      if switched: break
-                  except Exception as ex:
-                      print('SELECT SWITCH ERR',ex)
-
-              # Otherwise click the smallest visible Mackay-labelled control/link/button.
-              if not switched:
-                  candidates=[]
-                  for e in matches:
-                      try:
-                          txt=e.text.strip()
-                          if e.is_displayed() and txt and len(txt)<120 and e.tag_name.lower() in ('button','a','label','div','span','li'):
-                              candidates.append((len(txt),e,txt))
-                      except Exception: pass
-                  candidates.sort(key=lambda x:x[0])
-                  for _,e,txt in candidates:
-                      try:
-                          print('TRY CLICK',e.tag_name,repr(txt))
-                          driver.execute_script('arguments[0].scrollIntoView({block:"center"});', e)
-                          time.sleep(.3)
-                          driver.execute_script('arguments[0].click();', e)
-                          switched=True
-                          print('CLICKED',repr(txt))
-                          break
-                      except Exception as ex:
-                          print('CLICK ERR',repr(txt),ex)
-
-              time.sleep(12)
-              print('SWITCHED?', switched)
-              print('AFTER URL', driver.current_url)
-              print('AFTER BODY START')
-              print(driver.find_element(By.TAG_NAME,'body').text[:7000])
-              print('AFTER BODY END')
-
-              try:
-                  print('LOCALSTORAGE', driver.execute_script('return JSON.stringify(localStorage);'))
-                  print('SESSIONSTORAGE', driver.execute_script('return JSON.stringify(sessionStorage);'))
-              except Exception as ex: print('STORAGE ERR',ex)
-
-              print('--- BROWSER LOGS ---')
-              for entry in driver.get_log('browser'):
-                  print(entry)
-
-              print('--- NETWORK RELEVANT ---')
-              req={}
-              events=[]
-              for entry in driver.get_log('performance'):
-                  try:
-                      msg=json.loads(entry['message'])['message']
-                      method=msg.get('method')
-                      params=msg.get('params',{})
-                      if method=='Network.requestWillBeSent':
-                          rid=params.get('requestId'); url=params.get('request',{}).get('url','')
-                          req[rid]=url
-                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')):
-                              events.append(('REQUEST',url,''))
-                      elif method=='Network.responseReceived':
-                          r=params.get('response',{}); url=r.get('url','')
-                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')):
-                              events.append(('RESPONSE',url,str(r.get('status'))+' '+str(r.get('mimeType'))))
-                      elif method=='Network.loadingFailed':
-                          rid=params.get('requestId'); url=req.get(rid,'')
-                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')):
-                              events.append(('FAILED',url,str(params)))
-                  except Exception:
-                      pass
-              for kind,url,extra in events:
-                  print(kind,extra,url)
-          finally:
-              driver.quit()
+          from pathlib import Path
+          p=Path('static/js/main.threeregion-20260829.js')
+          s=p.read_text(encoding='utf-8')
+          needles=[
+            'irat-standalone-paddocks',
+            'Burdekin demo',
+            'Mackay',
+            'Bundaberg',
+            'root:"V6"',
+            'root:"V8"',
+            'root:"BMRGDemoV1"',
+            'MW_01MayR6V1',
+            'weatherStations:[Sk.Mackay]',
+          ]
+          for needle in needles:
+              print('\n===== NEEDLE',needle,'COUNT',s.count(needle),'=====')
+              start=0
+              for n in range(min(10,s.count(needle))):
+                  i=s.find(needle,start)
+                  if i<0: break
+                  print(f'--- occurrence {n+1} at {i} ---')
+                  print(s[max(0,i-1200):min(len(s),i+len(needle)+1800)])
+                  start=i+len(needle)
           PY
