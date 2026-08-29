@@ -7,10 +7,10 @@ on:
 permissions:
   contents: read
 jobs:
-  reproduce-mackay:
+  verify-mackay:
     runs-on: ubuntu-latest
     steps:
-      - name: Switch live paddock to Mackay and trace requests
+      - name: Verify Mackay live in a real browser
         shell: bash
         run: |
           set -euo pipefail
@@ -29,7 +29,7 @@ jobs:
           opts.set_capability('goog:loggingPrefs', {'browser':'ALL','performance':'ALL'})
           d=webdriver.Chrome(options=opts)
           try:
-              d.get('https://ericwangjcu.github.io/i-rat-burdekin-demo/?mackaytrace=20260829g')
+              d.get('https://ericwangjcu.github.io/i-rat-burdekin-demo/?mackayverify=20260829h')
               time.sleep(8)
               for b in d.find_elements(By.TAG_NAME,'button'):
                   if b.is_displayed() and b.text.strip().lower()=='accept':
@@ -39,25 +39,18 @@ jobs:
                       d.execute_script('arguments[0].click();',b); break
               time.sleep(2)
 
-              markers=d.find_elements(By.CSS_SELECTOR,'.leaflet-marker-icon')
-              print('MARKER COUNT',len(markers))
               target=None
-              for m in markers:
-                  outer=m.get_attribute('outerHTML') or ''
-                  print('MARKER',outer[:900])
-                  if 'Pleystowe Sugar Mill' in outer:
+              for m in d.find_elements(By.CSS_SELECTOR,'.leaflet-marker-icon'):
+                  if 'Pleystowe Sugar Mill' in (m.get_attribute('outerHTML') or ''):
                       target=m
               if target is None:
                   raise SystemExit('No Pleystowe marker found')
               d.execute_script('arguments[0].click();',target)
               time.sleep(3)
-              body=d.find_element(By.TAG_NAME,'body').text
-              print('REGION AFTER MARKER', [x for x in body.splitlines() if x.startswith('Region ') or 'Pleystowe' in x][:10])
 
               applied=False
               for b in d.find_elements(By.TAG_NAME,'button'):
                   if b.is_displayed() and b.text.strip().lower()=='apply':
-                      print('CLICK APPLY')
                       d.execute_script('arguments[0].click();',b)
                       applied=True
                       break
@@ -67,8 +60,7 @@ jobs:
 
               final=d.find_element(By.TAG_NAME,'body').text
               print('HAS ERROR', 'Failed to get scenario data' in final)
-              print('SUMMARY LINE', [x for x in final.splitlines() if 'Summary of changes' in x][:3])
-              print('LOCALSTORAGE',d.execute_script('return JSON.stringify(localStorage);'))
+              print('SUMMARY', [x for x in final.splitlines() if 'Summary of changes' in x][:3])
 
               req={}; events=[]
               for entry in d.get_log('performance'):
@@ -76,18 +68,24 @@ jobs:
                       msg=json.loads(entry['message'])['message']; method=msg.get('method'); p=msg.get('params',{})
                       if method=='Network.requestWillBeSent':
                           rid=p.get('requestId'); url=p.get('request',{}).get('url',''); req[rid]=url
-                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')): events.append(('REQUEST','',url))
+                          if '/V8/' in url or 'Mackay' in url: events.append(('REQUEST','',url))
                       elif method=='Network.responseReceived':
                           r=p.get('response',{}); url=r.get('url','')
-                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')): events.append(('RESPONSE',str(r.get('status'))+' '+str(r.get('mimeType')),url))
+                          if '/V8/' in url or 'Mackay' in url: events.append(('RESPONSE',str(r.get('status'))+' '+str(r.get('mimeType')),url))
                       elif method=='Network.loadingFailed':
                           url=req.get(p.get('requestId'),'')
-                          if any(k in url for k in ('.csv','/data/','amazonaws','/V8/','Mackay')): events.append(('FAILED',str(p),url))
+                          if '/V8/' in url or 'Mackay' in url: events.append(('FAILED',str(p),url))
                   except Exception: pass
-              print('--- NETWORK ---')
               for e in events: print(*e)
-              print('--- BROWSER ---')
-              for e in d.get_log('browser'): print(e)
+
+              if 'Failed to get scenario data' in final:
+                  raise SystemExit('Mackay still shows scenario error')
+              if 'Summary of changes (averaged across 50 seasons' not in final:
+                  raise SystemExit('Mackay did not load 50 seasons')
+              bad=[e for e in events if e[0]=='RESPONSE' and not e[1].startswith('200 ')]
+              if bad:
+                  raise SystemExit('Mackay has non-200 scenario responses: '+repr(bad))
+              print('MACKAY_LIVE_BROWSER_OK')
           finally:
               d.quit()
           PY
